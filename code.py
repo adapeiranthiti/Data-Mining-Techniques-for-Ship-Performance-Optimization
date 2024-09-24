@@ -340,7 +340,7 @@ def dbscan_outlier_detection(df, eps_in = 0.5):
 
   df_train = df[features_model].head(60000) #Training to the first 60000 samples
   dbscan = DBSCAN(eps = eps_in, n_jobs = -1) #Initialize the DBSCAN model with specified epsilon and all available CPUs for parallel processing
-  model = dbscan.fit(df_train[['rpm', 'foc']]) #Training according to the features stw and foc
+  model = dbscan.fit(df_train[['rpm', 'foc']]) #Training according to the features rpm and foc
   labels = model.labels_ #Retrieve the cluster labels from the DBSCAN model
   df_train["anomaly_score"] = labels #The cluster labels are saved to the column anomaly_score of the dataframe
   anomalies = df_train[df_train.anomaly_score == -1] #Samples with label -1 we be considered anomalies
@@ -396,27 +396,669 @@ def dbscan_training(df, site_id, features_model, lstm, min_speed = None, max_spe
 
   epochs = 100 #Defines the number of epochs to 100
 
+  #If lstm=True
   if lstm:
-    history = estimator.fit(x_lstm, y_lstm, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #Added callbacks
+    history = estimator.fit(x_lstm, y_lstm, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #Τhe LSTM data x_lstm and y_lstm are used
   else:
-    history = estimator.fit(partitions_x, partitions_y, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],)
+    history = estimator.fit(partitions_x, partitions_y, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #partitions_x and partitions_y are used
 
+  #Extracts the loss and validation loss from the training history
   list_loss = history.history['loss']
   list_val_loss = history.history['val_loss']
 
-  print("Loss: ", list_loss)  #Byron addition
+  #Prints the loss and validation loss during training
+  print("Loss: ", list_loss)
   print("Val Loss: ", list_val_loss)
 
-  mse = estimator.evaluate(x_lstm, y_lstm) if lstm else estimator.evaluate(partitions_x, partitions_y)
+  mse = estimator.evaluate(x_lstm, y_lstm) if lstm else estimator.evaluate(partitions_x, partitions_y) #Evaluates the model on the training data and calculates the mean squared error (MSE)
+  #Computes the root mean square (RMS) for both the training loss and validation loss
   loss = str(np.round(math.sqrt(np.mean(list_loss))))
   val_loss = str(np.round(math.sqrt(np.mean(list_val_loss))))
+  #Converts the list of training and validation losses to their square root (MAE approximation)
   mae_list_loss = [math.sqrt(x) for x in list_loss]
   mae_list_val_loss = [math.sqrt(x) for x in list_val_loss]
-  plot_convergence(mae_list_loss, mae_list_val_loss, loss, val_loss, mse, history, site_id)
-  print("\nLoss {} Val Loss {}".format(loss, val_loss))
-  arch = estimator.to_json()
+  plot_convergence(mae_list_loss, mae_list_val_loss, loss, val_loss, mse, history, site_id) #Calls plot_convergence to generate and plot the convergence of training and validation losses
+  print("\nLoss {} Val Loss {}".format(loss, val_loss)) #Prints the final training and validation loss values after model training
+  arch = estimator.to_json() #Serializes the model architecture to a JSON string
 
+  return {"loss": loss, "val_loss": val_loss, 'estimator': estimator, 'epochs' : epochs} #Returns a dictionary containing the final loss, validation loss, trained model (estimator), and the number of epochs
 
-  return {"loss": loss, "val_loss": val_loss, 'estimator': estimator, 'epochs' : epochs}
+dbscan_res = dbscan_training(df, site_id, features_model, lstm, min_speed = 9, max_speed = 23, ) #Calls the DBSCAN training function
+
+ #Using stw
+
+def dbscan_outlier_detection(df, eps_in = 0.5):
+
+  df_train = df[features_model].head(60000) #Training to the first 60000 samples
+  dbscan = DBSCAN(eps = eps_in, n_jobs = -1) #Initialize the DBSCAN model with specified epsilon and all available CPUs for parallel processing
+  model = dbscan.fit(df_train[['stw', 'foc']]) #Training according to the features stw and foc
+  labels = model.labels_ #Retrieve the cluster labels from the DBSCAN model
+  df_train["anomaly_score"] = labels #The cluster labels are saved to the column anomaly_score of the dataframe
+  anomalies = df_train[df_train.anomaly_score == -1] #Samples with label -1 we be considered anomalies
+  data = df_train.drop(anomalies.index.values, axis = 0) #And they will be dropped from the dataframe
+  df_train = data.astype(float).dropna() #Droping the Na values
+
+  return df_train
+
+#DBSCAN algorithm training
+def dbscan_training(df, site_id, features_model, lstm, min_speed = None, max_speed = None, ):
+  df = dbscan_outlier_detection(df, eps_in = 0.5) #Calling function to detect and remove outliers in the DataFrame df. Use an epsilon value (eps_in) of 0.5 for neighborhood distance.
+
+  df = df[features_model] #The df will have only the selected features
+
+  cleaned_data = df
+
+  cleaned_data = cleaned_data.values[:90000] #Selecting only the first 90000 data
+
+  val_len = int(len(cleaned_data) * 0.1) #Setting validation length to 10% of the total cleaned data
+
+  #Separating the feature matrix x and the target variable y from the cleaned data
+  x = cleaned_data[:, :cleaned_data.shape[1] - 1] #x contains all columns except the last one (features)
+  y = cleaned_data[:, cleaned_data.shape[1] - 1] #y contains the last column (target)
+
+  #Training model
+  tr_len = len(cleaned_data) - val_len #Setting the length of the training model equal to the difference of the validation length from the cleaned model length
+  partitions_x = cleaned_data[:tr_len, :cleaned_data.shape[1] - 1] #The first tr_len rows are used for training
+  partitions_y = cleaned_data[:tr_len, cleaned_data.shape[1] - 1] #The rest tr_len rowsare used for validation
+
+  #Validation model
+  df_val = cleaned_data
+  
+  #The last val_len rows are split into partitions_x_val (features) and partitions_y_val
+  partitions_x_val = df_val[-val_len:, :df_val.shape[1] - 1] 
+  partitions_y_val = df_val[-val_len:, df_val.shape[1] - 1]
+
+  val_data = np.array(np.append(partitions_x_val, np.asmatrix([partitions_y_val]).T, axis = 1)) #Combines partitions_x_val and partitions_y_val back into a single array val_data for validation purposes
+
+  n_steps = 15 #Defines the number of time steps for sequence data
+
+  input_shape = partitions_x.shape[1] #Defines the input shape as the number of features in the dataset
+
+  raw_seq = np.array(np.append(x, np.asmatrix([y]).T, axis = 1)) #x and y arrays are concatenated into one array
+
+  #If lstm=True
+  if lstm:
+    x_lstm, y_lstm = split_sequence(raw_seq, n_steps) #Calls the split_sequence function to split the raw data raw_seq into sequences of length n_steps
+
+  neurons = 15 #Defines the number of the neurons to 15
+  estimator = baseline_model(neurons, n_steps, input_shape, lstm, optimizer='Adam') #Calls the baseline model to build the model 
+
+  callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=4) #Sets up early stopping to monitor val_loss and stop training if the loss doesn't improve after 4 consecutive epochs
+
+  epochs = 100 #Defines the number of epochs to 100
+
+  #If lstm=True
+  if lstm:
+    history = estimator.fit(x_lstm, y_lstm, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #Τhe LSTM data x_lstm and y_lstm are used
+  else:
+    history = estimator.fit(partitions_x, partitions_y, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #partitions_x and partitions_y are used
+
+  #Extracts the loss and validation loss from the training history
+  list_loss = history.history['loss']
+  list_val_loss = history.history['val_loss']
+
+  #Prints the loss and validation loss during training
+  print("Loss: ", list_loss)
+  print("Val Loss: ", list_val_loss)
+
+  mse = estimator.evaluate(x_lstm, y_lstm) if lstm else estimator.evaluate(partitions_x, partitions_y) #Evaluates the model on the training data and calculates the mean squared error (MSE)
+  #Computes the root mean square (RMS) for both the training loss and validation loss
+  loss = str(np.round(math.sqrt(np.mean(list_loss))))
+  val_loss = str(np.round(math.sqrt(np.mean(list_val_loss))))
+  #Converts the list of training and validation losses to their square root (MAE approximation)
+  mae_list_loss = [math.sqrt(x) for x in list_loss]
+  mae_list_val_loss = [math.sqrt(x) for x in list_val_loss]
+  plot_convergence(mae_list_loss, mae_list_val_loss, loss, val_loss, mse, history, site_id) #Calls plot_convergence to generate and plot the convergence of training and validation losses
+  print("\nLoss {} Val Loss {}".format(loss, val_loss)) #Prints the final training and validation loss values after model training
+  arch = estimator.to_json() #Serializes the model architecture to a JSON string
+
+  return {"loss": loss, "val_loss": val_loss, 'estimator': estimator, 'epochs' : epochs} #Returns a dictionary containing the final loss, validation loss, trained model (estimator), and the number of epochs
+
+dbscan_res = dbscan_training(df, site_id, features_model, lstm, min_speed = 9, max_speed = 23, ) #Calls the DBSCAN training function
+
+###Isolation Forest Algorithms
+ ##Using rpm
+
+def isolation_forest_outlier_detection(df, contamination_in = 0.01, n_estimators_in = 100, max_samples_in = 'auto', max_features_in = 1.0, bootstrap_in = False, n_jobs_in = -1, random_state_in = 0, verbose_in = 0):
+
+  df_train = df[features_model].head(60000)  #Training to the first 60000 samples
+  isolation_forest = IsolationForest(n_estimators = n_estimators_in, contamination = contamination_in, max_samples = max_samples_in, max_features = max_features_in, bootstrap = bootstrap_in, n_jobs = n_jobs_in, random_state = random_state_in, verbose = verbose_in)  #Initialize the iForest model
+  model = isolation_forest.fit(df_train[['rpm', 'foc']]) #Training according to the features rpm and foc
+  df_train["anomaly_score"] = model.predict(df_train[['rpm', 'foc']]) #Predicting the anomalies in a new column in the dataset
+  anomalies = df_train[df_train.anomaly_score == -1] #Samples with label -1 we be considered anomalies
+  data = df_train.drop(anomalies.index.values, axis = 0) #And they will be dropped from the dataframe
+  df_train = data.astype(float).dropna() #Droping the Na values
+
+  return df_train
+
+#iForest algorithm training
+def isolation_forest_training(df, site_id, features_model, lstm, min_speed = None, max_speed = None, ):
+  df = isollation_forest_detection(df, contamination_in = 0.01, n_estimators_in = 100, max_samples_in = 'auto', max_features_in = 1.0, bootstrap_in = False, n_jobs_in = -1, random_state_in = 0, verbose_in = 0) #Calling function to detect and remove outliers in the DataFrame df
+
+  df = df[features_model] #The df will have only the selected features
+
+  cleaned_data = df
+
+  cleaned_data = cleaned_data.values[:90000] #Selecting only the first 90000 data
+
+  val_len = int(len(cleaned_data) * 0.1) #Setting validation length to 10% of the total cleaned data
+
+  #Separating the feature matrix x and the target variable y from the cleaned data
+  x = cleaned_data[:, :cleaned_data.shape[1] - 1] #x contains all columns except the last one (features)
+  y = cleaned_data[:, cleaned_data.shape[1] - 1] #y contains the last column (target)
+
+  #Training model
+  tr_len = len(cleaned_data) - val_len #Setting the length of the training model equal to the difference of the validation length from the cleaned model length
+  partitions_x = cleaned_data[:tr_len, :cleaned_data.shape[1] - 1] #The first tr_len rows are used for training
+  partitions_y = cleaned_data[:tr_len, cleaned_data.shape[1] - 1] #The rest tr_len rowsare used for validation
+
+  #Validation model
+  df_val = cleaned_data
+  
+  #The last val_len rows are split into partitions_x_val (features) and partitions_y_val
+  partitions_x_val = df_val[-val_len:, :df_val.shape[1] - 1] 
+  partitions_y_val = df_val[-val_len:, df_val.shape[1] - 1]
+
+  val_data = np.array(np.append(partitions_x_val, np.asmatrix([partitions_y_val]).T, axis = 1)) #Combines partitions_x_val and partitions_y_val back into a single array val_data for validation purposes
+
+  n_steps = 15 #Defines the number of time steps for sequence data
+
+  input_shape = partitions_x.shape[1] #Defines the input shape as the number of features in the dataset
+
+  raw_seq = np.array(np.append(x, np.asmatrix([y]).T, axis = 1)) #x and y arrays are concatenated into one array
+
+  #If lstm=True
+  if lstm:
+    x_lstm, y_lstm = split_sequence(raw_seq, n_steps) #Calls the split_sequence function to split the raw data raw_seq into sequences of length n_steps
+
+  neurons = 15 #Defines the number of the neurons to 15
+  estimator = baseline_model(neurons, n_steps, input_shape, lstm, optimizer='Adam') #Calls the baseline model to build the model 
+
+  callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=4) #Sets up early stopping to monitor val_loss and stop training if the loss doesn't improve after 4 consecutive epochs
+
+  epochs = 100 #Defines the number of epochs to 100
+
+  #If lstm=True
+  if lstm:
+    history = estimator.fit(x_lstm, y_lstm, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #Τhe LSTM data x_lstm and y_lstm are used
+  else:
+    history = estimator.fit(partitions_x, partitions_y, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #partitions_x and partitions_y are used
+
+  #Extracts the loss and validation loss from the training history
+  list_loss = history.history['loss']
+  list_val_loss = history.history['val_loss']
+
+  #Prints the loss and validation loss during training
+  print("Loss: ", list_loss)
+  print("Val Loss: ", list_val_loss)
+
+  mse = estimator.evaluate(x_lstm, y_lstm) if lstm else estimator.evaluate(partitions_x, partitions_y) #Evaluates the model on the training data and calculates the mean squared error (MSE)
+  #Computes the root mean square (RMS) for both the training loss and validation loss
+  loss = str(np.round(math.sqrt(np.mean(list_loss))))
+  val_loss = str(np.round(math.sqrt(np.mean(list_val_loss))))
+  #Converts the list of training and validation losses to their square root (MAE approximation)
+  mae_list_loss = [math.sqrt(x) for x in list_loss]
+  mae_list_val_loss = [math.sqrt(x) for x in list_val_loss]
+  plot_convergence(mae_list_loss, mae_list_val_loss, loss, val_loss, mse, history, site_id) #Calls plot_convergence to generate and plot the convergence of training and validation losses
+  print("\nLoss {} Val Loss {}".format(loss, val_loss)) #Prints the final training and validation loss values after model training
+  arch = estimator.to_json() #Serializes the model architecture to a JSON string
+
+  return {"loss": loss, "val_loss": val_loss, 'estimator': estimator, 'epochs' : epochs} #Returns a dictionary containing the final loss, validation loss, trained model (estimator), and the number of epochs
+
+i_forest_res = isolation_forest_training(df, site_id, features_model, lstm, min_speed = 9, max_speed = 23, ) #Calls the DBSCAN training function
+
+##Using stw
+
+def isolation_forest_outlier_detection(df, contamination_in = 0.01, n_estimators_in = 100, max_samples_in = 'auto', max_features_in = 1.0, bootstrap_in = False, n_jobs_in = -1, random_state_in = 0, verbose_in = 0):
+
+  df_train = df[features_model].head(60000)  #Training to the first 60000 samples
+  isolation_forest = IsolationForest(n_estimators = n_estimators_in, contamination = contamination_in, max_samples = max_samples_in, max_features = max_features_in, bootstrap = bootstrap_in, n_jobs = n_jobs_in, random_state = random_state_in, verbose = verbose_in)  #Initialize the iForest model
+  model = isolation_forest.fit(df_train[['stw', 'foc']]) #Training according to the features stw and foc
+  df_train["anomaly_score"] = model.predict(df_train[['stw', 'foc']]) #Predicting the anomalies in a new column in the dataset
+  anomalies = df_train[df_train.anomaly_score == -1] #Samples with label -1 we be considered anomalies
+  data = df_train.drop(anomalies.index.values, axis = 0) #And they will be dropped from the dataframe
+  df_train = data.astype(float).dropna() #Droping the Na values
+
+  return df_train
+
+#iForest algorithm training
+def isolation_forest_training(df, site_id, features_model, lstm, min_speed = None, max_speed = None, ):
+  df = isollation_forest_detection(df, contamination_in = 0.01, n_estimators_in = 100, max_samples_in = 'auto', max_features_in = 1.0, bootstrap_in = False, n_jobs_in = -1, random_state_in = 0, verbose_in = 0) #Calling function to detect and remove outliers in the DataFrame df
+
+  df = df[features_model] #The df will have only the selected features
+
+  cleaned_data = df
+
+  cleaned_data = cleaned_data.values[:90000] #Selecting only the first 90000 data
+
+  val_len = int(len(cleaned_data) * 0.1) #Setting validation length to 10% of the total cleaned data
+
+  #Separating the feature matrix x and the target variable y from the cleaned data
+  x = cleaned_data[:, :cleaned_data.shape[1] - 1] #x contains all columns except the last one (features)
+  y = cleaned_data[:, cleaned_data.shape[1] - 1] #y contains the last column (target)
+
+  #Training model
+  tr_len = len(cleaned_data) - val_len #Setting the length of the training model equal to the difference of the validation length from the cleaned model length
+  partitions_x = cleaned_data[:tr_len, :cleaned_data.shape[1] - 1] #The first tr_len rows are used for training
+  partitions_y = cleaned_data[:tr_len, cleaned_data.shape[1] - 1] #The rest tr_len rowsare used for validation
+
+  #Validation model
+  df_val = cleaned_data
+  
+  #The last val_len rows are split into partitions_x_val (features) and partitions_y_val
+  partitions_x_val = df_val[-val_len:, :df_val.shape[1] - 1] 
+  partitions_y_val = df_val[-val_len:, df_val.shape[1] - 1]
+
+  val_data = np.array(np.append(partitions_x_val, np.asmatrix([partitions_y_val]).T, axis = 1)) #Combines partitions_x_val and partitions_y_val back into a single array val_data for validation purposes
+
+  n_steps = 15 #Defines the number of time steps for sequence data
+
+  input_shape = partitions_x.shape[1] #Defines the input shape as the number of features in the dataset
+
+  raw_seq = np.array(np.append(x, np.asmatrix([y]).T, axis = 1)) #x and y arrays are concatenated into one array
+
+  #If lstm=True
+  if lstm:
+    x_lstm, y_lstm = split_sequence(raw_seq, n_steps) #Calls the split_sequence function to split the raw data raw_seq into sequences of length n_steps
+
+  neurons = 15 #Defines the number of the neurons to 15
+  estimator = baseline_model(neurons, n_steps, input_shape, lstm, optimizer='Adam') #Calls the baseline model to build the model 
+
+  callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=4) #Sets up early stopping to monitor val_loss and stop training if the loss doesn't improve after 4 consecutive epochs
+
+  epochs = 100 #Defines the number of epochs to 100
+
+  #If lstm=True
+  if lstm:
+    history = estimator.fit(x_lstm, y_lstm, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #Τhe LSTM data x_lstm and y_lstm are used
+  else:
+    history = estimator.fit(partitions_x, partitions_y, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #partitions_x and partitions_y are used
+
+  #Extracts the loss and validation loss from the training history
+  list_loss = history.history['loss']
+  list_val_loss = history.history['val_loss']
+
+  #Prints the loss and validation loss during training
+  print("Loss: ", list_loss)
+  print("Val Loss: ", list_val_loss)
+
+  mse = estimator.evaluate(x_lstm, y_lstm) if lstm else estimator.evaluate(partitions_x, partitions_y) #Evaluates the model on the training data and calculates the mean squared error (MSE)
+  #Computes the root mean square (RMS) for both the training loss and validation loss
+  loss = str(np.round(math.sqrt(np.mean(list_loss))))
+  val_loss = str(np.round(math.sqrt(np.mean(list_val_loss))))
+  #Converts the list of training and validation losses to their square root (MAE approximation)
+  mae_list_loss = [math.sqrt(x) for x in list_loss]
+  mae_list_val_loss = [math.sqrt(x) for x in list_val_loss]
+  plot_convergence(mae_list_loss, mae_list_val_loss, loss, val_loss, mse, history, site_id) #Calls plot_convergence to generate and plot the convergence of training and validation losses
+  print("\nLoss {} Val Loss {}".format(loss, val_loss)) #Prints the final training and validation loss values after model training
+  arch = estimator.to_json() #Serializes the model architecture to a JSON string
+
+  return {"loss": loss, "val_loss": val_loss, 'estimator': estimator, 'epochs' : epochs} #Returns a dictionary containing the final loss, validation loss, trained model (estimator), and the number of epochs
+
+i_forest_res = isolation_forest_training(df, site_id, features_model, lstm, min_speed = 9, max_speed = 23, ) #Calls the DBSCAN training function
+
+###OCSVM Algorithms
+ ##Using rpm
+
+def ocsvm_outlier_detection(df, kernel_in='rbf', degree_in=3, gamma_in='scale', nu_in=0.01, shrinking_in=True, cache_size_in=200, verbose_in=False, max_iter_in=-1):
+
+  df_train = df[features_model].head(60000)  #Training to the first 60000 samples
+  ocsvm_forest = OneClassSVM(kernel=kernel_in, degree=degree_in, gamma=gamma_in, nu=nu_in, shrinking=shrinking_in, cache_size=cache_size_in, verbose=verbose_in, max_iter=max_iter_in)  #Initialize the ocsvm model
+  model = ocsvm.fit(df_train[['rpm', 'foc']]) #Training according to the features rpm and foc
+  df_train["anomaly_score"] = model.predict(df_train[['rpm', 'foc']]) #Predicting the anomalies in a new column in the dataset
+  anomalies = df_train[df_train.anomaly_score == -1] #Samples with label -1 we be considered anomalies
+  data = df_train.drop(anomalies.index.values, axis = 0) #And they will be dropped from the dataframe
+  df_train = data.astype(float).dropna() #Droping the Na values
+
+  return df_train
+
+#OCSVM algorithm training
+def ocsvm_training(df, site_id, features_model, lstm, min_speed = None, max_speed = None, ):
+  df = isollation_forest_detection(df, kernel_in='rbf', degree_in=3, gamma_in='scale', nu_in=0.01, shrinking_in=True, cache_size_in=200, verbose_in=False, max_iter_in=-1) #Calling function to detect and remove outliers in the DataFrame df
+
+  df = df[features_model] #The df will have only the selected features
+
+  cleaned_data = df
+
+  cleaned_data = cleaned_data.values[:90000] #Selecting only the first 90000 data
+
+  val_len = int(len(cleaned_data) * 0.1) #Setting validation length to 10% of the total cleaned data
+
+  #Separating the feature matrix x and the target variable y from the cleaned data
+  x = cleaned_data[:, :cleaned_data.shape[1] - 1] #x contains all columns except the last one (features)
+  y = cleaned_data[:, cleaned_data.shape[1] - 1] #y contains the last column (target)
+
+  #Training model
+  tr_len = len(cleaned_data) - val_len #Setting the length of the training model equal to the difference of the validation length from the cleaned model length
+  partitions_x = cleaned_data[:tr_len, :cleaned_data.shape[1] - 1] #The first tr_len rows are used for training
+  partitions_y = cleaned_data[:tr_len, cleaned_data.shape[1] - 1] #The rest tr_len rowsare used for validation
+
+  #Validation model
+  df_val = cleaned_data
+  
+  #The last val_len rows are split into partitions_x_val (features) and partitions_y_val
+  partitions_x_val = df_val[-val_len:, :df_val.shape[1] - 1] 
+  partitions_y_val = df_val[-val_len:, df_val.shape[1] - 1]
+
+  val_data = np.array(np.append(partitions_x_val, np.asmatrix([partitions_y_val]).T, axis = 1)) #Combines partitions_x_val and partitions_y_val back into a single array val_data for validation purposes
+
+  n_steps = 15 #Defines the number of time steps for sequence data
+
+  input_shape = partitions_x.shape[1] #Defines the input shape as the number of features in the dataset
+
+  raw_seq = np.array(np.append(x, np.asmatrix([y]).T, axis = 1)) #x and y arrays are concatenated into one array
+
+  #If lstm=True
+  if lstm:
+    x_lstm, y_lstm = split_sequence(raw_seq, n_steps) #Calls the split_sequence function to split the raw data raw_seq into sequences of length n_steps
+
+  neurons = 15 #Defines the number of the neurons to 15
+  estimator = baseline_model(neurons, n_steps, input_shape, lstm, optimizer='Adam') #Calls the baseline model to build the model 
+
+  callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=4) #Sets up early stopping to monitor val_loss and stop training if the loss doesn't improve after 4 consecutive epochs
+
+  epochs = 100 #Defines the number of epochs to 100
+
+  #If lstm=True
+  if lstm:
+    history = estimator.fit(x_lstm, y_lstm, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #Τhe LSTM data x_lstm and y_lstm are used
+  else:
+    history = estimator.fit(partitions_x, partitions_y, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #partitions_x and partitions_y are used
+
+  #Extracts the loss and validation loss from the training history
+  list_loss = history.history['loss']
+  list_val_loss = history.history['val_loss']
+
+  #Prints the loss and validation loss during training
+  print("Loss: ", list_loss)
+  print("Val Loss: ", list_val_loss)
+
+  mse = estimator.evaluate(x_lstm, y_lstm) if lstm else estimator.evaluate(partitions_x, partitions_y) #Evaluates the model on the training data and calculates the mean squared error (MSE)
+  #Computes the root mean square (RMS) for both the training loss and validation loss
+  loss = str(np.round(math.sqrt(np.mean(list_loss))))
+  val_loss = str(np.round(math.sqrt(np.mean(list_val_loss))))
+  #Converts the list of training and validation losses to their square root (MAE approximation)
+  mae_list_loss = [math.sqrt(x) for x in list_loss]
+  mae_list_val_loss = [math.sqrt(x) for x in list_val_loss]
+  plot_convergence(mae_list_loss, mae_list_val_loss, loss, val_loss, mse, history, site_id) #Calls plot_convergence to generate and plot the convergence of training and validation losses
+  print("\nLoss {} Val Loss {}".format(loss, val_loss)) #Prints the final training and validation loss values after model training
+  arch = estimator.to_json() #Serializes the model architecture to a JSON string
+
+  return {"loss": loss, "val_loss": val_loss, 'estimator': estimator, 'epochs' : epochs} #Returns a dictionary containing the final loss, validation loss, trained model (estimator), and the number of epochs
+
+ocsvm_res = ocsvm_training(df, site_id, features_model, lstm, min_speed = 9, max_speed = 23, ) #Calls the DBSCAN training function
+
+##Using stw
+
+def ocsvm_outlier_detection(df, kernel_in='rbf', degree_in=3, gamma_in='scale', nu_in=0.01, shrinking_in=True, cache_size_in=200, verbose_in=False, max_iter_in=-1):
+
+  df_train = df[features_model].head(60000)  #Training to the first 60000 samples
+  ocsvm_forest = OneClassSVM(kernel=kernel_in, degree=degree_in, gamma=gamma_in, nu=nu_in, shrinking=shrinking_in, cache_size=cache_size_in, verbose=verbose_in, max_iter=max_iter_in)  #Initialize the ocsvm model
+  model = ocsvm.fit(df_train[['stw', 'foc']]) #Training according to the features rpm and foc
+  df_train["anomaly_score"] = model.predict(df_train[['stw', 'foc']]) #Predicting the anomalies in a new column in the dataset
+  anomalies = df_train[df_train.anomaly_score == -1] #Samples with label -1 we be considered anomalies
+  data = df_train.drop(anomalies.index.values, axis = 0) #And they will be dropped from the dataframe
+  df_train = data.astype(float).dropna() #Droping the Na values
+
+  return df_train
+
+#OCSVM algorithm training
+def ocsvm_training(df, site_id, features_model, lstm, min_speed = None, max_speed = None, ):
+  df = isollation_forest_detection(df, kernel_in='rbf', degree_in=3, gamma_in='scale', nu_in=0.01, shrinking_in=True, cache_size_in=200, verbose_in=False, max_iter_in=-1) #Calling function to detect and remove outliers in the DataFrame df
+
+  df = df[features_model] #The df will have only the selected features
+
+  cleaned_data = df
+
+  cleaned_data = cleaned_data.values[:90000] #Selecting only the first 90000 data
+
+  val_len = int(len(cleaned_data) * 0.1) #Setting validation length to 10% of the total cleaned data
+
+  #Separating the feature matrix x and the target variable y from the cleaned data
+  x = cleaned_data[:, :cleaned_data.shape[1] - 1] #x contains all columns except the last one (features)
+  y = cleaned_data[:, cleaned_data.shape[1] - 1] #y contains the last column (target)
+
+  #Training model
+  tr_len = len(cleaned_data) - val_len #Setting the length of the training model equal to the difference of the validation length from the cleaned model length
+  partitions_x = cleaned_data[:tr_len, :cleaned_data.shape[1] - 1] #The first tr_len rows are used for training
+  partitions_y = cleaned_data[:tr_len, cleaned_data.shape[1] - 1] #The rest tr_len rowsare used for validation
+
+  #Validation model
+  df_val = cleaned_data
+  
+  #The last val_len rows are split into partitions_x_val (features) and partitions_y_val
+  partitions_x_val = df_val[-val_len:, :df_val.shape[1] - 1] 
+  partitions_y_val = df_val[-val_len:, df_val.shape[1] - 1]
+
+  val_data = np.array(np.append(partitions_x_val, np.asmatrix([partitions_y_val]).T, axis = 1)) #Combines partitions_x_val and partitions_y_val back into a single array val_data for validation purposes
+
+  n_steps = 15 #Defines the number of time steps for sequence data
+
+  input_shape = partitions_x.shape[1] #Defines the input shape as the number of features in the dataset
+
+  raw_seq = np.array(np.append(x, np.asmatrix([y]).T, axis = 1)) #x and y arrays are concatenated into one array
+
+  #If lstm=True
+  if lstm:
+    x_lstm, y_lstm = split_sequence(raw_seq, n_steps) #Calls the split_sequence function to split the raw data raw_seq into sequences of length n_steps
+
+  neurons = 15 #Defines the number of the neurons to 15
+  estimator = baseline_model(neurons, n_steps, input_shape, lstm, optimizer='Adam') #Calls the baseline model to build the model 
+
+  callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=4) #Sets up early stopping to monitor val_loss and stop training if the loss doesn't improve after 4 consecutive epochs
+
+  epochs = 100 #Defines the number of epochs to 100
+
+  #If lstm=True
+  if lstm:
+    history = estimator.fit(x_lstm, y_lstm, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #Τhe LSTM data x_lstm and y_lstm are used
+  else:
+    history = estimator.fit(partitions_x, partitions_y, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #partitions_x and partitions_y are used
+
+  #Extracts the loss and validation loss from the training history
+  list_loss = history.history['loss']
+  list_val_loss = history.history['val_loss']
+
+  #Prints the loss and validation loss during training
+  print("Loss: ", list_loss)
+  print("Val Loss: ", list_val_loss)
+
+  mse = estimator.evaluate(x_lstm, y_lstm) if lstm else estimator.evaluate(partitions_x, partitions_y) #Evaluates the model on the training data and calculates the mean squared error (MSE)
+  #Computes the root mean square (RMS) for both the training loss and validation loss
+  loss = str(np.round(math.sqrt(np.mean(list_loss))))
+  val_loss = str(np.round(math.sqrt(np.mean(list_val_loss))))
+  #Converts the list of training and validation losses to their square root (MAE approximation)
+  mae_list_loss = [math.sqrt(x) for x in list_loss]
+  mae_list_val_loss = [math.sqrt(x) for x in list_val_loss]
+  plot_convergence(mae_list_loss, mae_list_val_loss, loss, val_loss, mse, history, site_id) #Calls plot_convergence to generate and plot the convergence of training and validation losses
+  print("\nLoss {} Val Loss {}".format(loss, val_loss)) #Prints the final training and validation loss values after model training
+  arch = estimator.to_json() #Serializes the model architecture to a JSON string
+
+  return {"loss": loss, "val_loss": val_loss, 'estimator': estimator, 'epochs' : epochs} #Returns a dictionary containing the final loss, validation loss, trained model (estimator), and the number of epochs
+
+ocsvm_res = ocsvm_training(df, site_id, features_model, lstm, min_speed = 9, max_speed = 23, ) #Calls the DBSCAN training function
+
+###z-Score Algorithms
+ ##Using rpm
+
+def z_score_outlier_detection(df, threshold_in = 3):
+
+  df_train = df[features_model].head(60000)  #Training to the first 60000 samples
+  normality = df_train[(np.abs(stats.zscore(df_train[['rpm', 'foc']])) < 3).all(axis = 1)] #If the zscore is smaller than 3 then -> normal
+  anomalies = df_train[(np.abs(stats.zscore(df_train[['rpm', 'foc']])) > 3).all(axis = 1)] #If the zscore is greater than 3 then -> anomaly
+  labels = [0 if x in normality.index else 1 for x in df_train.index] #If normal 0 otherwise 1
+  df_train["anomaly_score"] = labels
+  anomalies = df_train[df_train.anomaly_score == -1] #Samples with label -1 we be considered anomalies
+  data = df_train.drop(anomalies.index.values, axis = 0) #And they will be dropped from the dataframe
+  df_train = data.astype(float).dropna() #Droping the Na values
+
+  return df_train
+
+#z-Score algorithm training
+def z_score_training(df, site_id, features_model, lstm, min_speed = None, max_speed = None, ):
+  df = z_score_detection(df, 3) #Calling function to detect and remove outliers in the DataFrame df
+
+  df = df[features_model] #The df will have only the selected features
+
+  cleaned_data = df
+
+  cleaned_data = cleaned_data.values[:90000] #Selecting only the first 90000 data
+
+  val_len = int(len(cleaned_data) * 0.1) #Setting validation length to 10% of the total cleaned data
+
+  #Separating the feature matrix x and the target variable y from the cleaned data
+  x = cleaned_data[:, :cleaned_data.shape[1] - 1] #x contains all columns except the last one (features)
+  y = cleaned_data[:, cleaned_data.shape[1] - 1] #y contains the last column (target)
+
+  #Training model
+  tr_len = len(cleaned_data) - val_len #Setting the length of the training model equal to the difference of the validation length from the cleaned model length
+  partitions_x = cleaned_data[:tr_len, :cleaned_data.shape[1] - 1] #The first tr_len rows are used for training
+  partitions_y = cleaned_data[:tr_len, cleaned_data.shape[1] - 1] #The rest tr_len rowsare used for validation
+
+  #Validation model
+  df_val = cleaned_data
+  
+  #The last val_len rows are split into partitions_x_val (features) and partitions_y_val
+  partitions_x_val = df_val[-val_len:, :df_val.shape[1] - 1] 
+  partitions_y_val = df_val[-val_len:, df_val.shape[1] - 1]
+
+  val_data = np.array(np.append(partitions_x_val, np.asmatrix([partitions_y_val]).T, axis = 1)) #Combines partitions_x_val and partitions_y_val back into a single array val_data for validation purposes
+
+  n_steps = 15 #Defines the number of time steps for sequence data
+
+  input_shape = partitions_x.shape[1] #Defines the input shape as the number of features in the dataset
+
+  raw_seq = np.array(np.append(x, np.asmatrix([y]).T, axis = 1)) #x and y arrays are concatenated into one array
+
+  #If lstm=True
+  if lstm:
+    x_lstm, y_lstm = split_sequence(raw_seq, n_steps) #Calls the split_sequence function to split the raw data raw_seq into sequences of length n_steps
+
+  neurons = 15 #Defines the number of the neurons to 15
+  estimator = baseline_model(neurons, n_steps, input_shape, lstm, optimizer='Adam') #Calls the baseline model to build the model 
+
+  callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=4) #Sets up early stopping to monitor val_loss and stop training if the loss doesn't improve after 4 consecutive epochs
+
+  epochs = 100 #Defines the number of epochs to 100
+
+  #If lstm=True
+  if lstm:
+    history = estimator.fit(x_lstm, y_lstm, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #Τhe LSTM data x_lstm and y_lstm are used
+  else:
+    history = estimator.fit(partitions_x, partitions_y, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #partitions_x and partitions_y are used
+
+  #Extracts the loss and validation loss from the training history
+  list_loss = history.history['loss']
+  list_val_loss = history.history['val_loss']
+
+  #Prints the loss and validation loss during training
+  print("Loss: ", list_loss)
+  print("Val Loss: ", list_val_loss)
+
+  mse = estimator.evaluate(x_lstm, y_lstm) if lstm else estimator.evaluate(partitions_x, partitions_y) #Evaluates the model on the training data and calculates the mean squared error (MSE)
+  #Computes the root mean square (RMS) for both the training loss and validation loss
+  loss = str(np.round(math.sqrt(np.mean(list_loss))))
+  val_loss = str(np.round(math.sqrt(np.mean(list_val_loss))))
+  #Converts the list of training and validation losses to their square root (MAE approximation)
+  mae_list_loss = [math.sqrt(x) for x in list_loss]
+  mae_list_val_loss = [math.sqrt(x) for x in list_val_loss]
+  plot_convergence(mae_list_loss, mae_list_val_loss, loss, val_loss, mse, history, site_id) #Calls plot_convergence to generate and plot the convergence of training and validation losses
+  print("\nLoss {} Val Loss {}".format(loss, val_loss)) #Prints the final training and validation loss values after model training
+  arch = estimator.to_json() #Serializes the model architecture to a JSON string
+
+  return {"loss": loss, "val_loss": val_loss, 'estimator': estimator, 'epochs' : epochs} #Returns a dictionary containing the final loss, validation loss, trained model (estimator), and the number of epochs
+
+zscore_res = z_score_training(df, site_id, features_model, lstm, min_speed = 9, max_speed = 23, ) #Calls the DBSCAN training function
+
+ ##Using stw
+
+def z_score_outlier_detection(df, threshold_in = 3):
+
+  df_train = df[features_model].head(60000)  #Training to the first 60000 samples
+  normality = df_train[(np.abs(stats.zscore(df_train[['stw', 'foc']])) < 3).all(axis = 1)] #If the zscore is smaller than 3 then -> normal
+  anomalies = df_train[(np.abs(stats.zscore(df_train[['stw', 'foc']])) > 3).all(axis = 1)] #If the zscore is greater than 3 then -> anomaly
+  labels = [0 if x in normality.index else 1 for x in df_train.index] #If normal 0 otherwise 1
+  df_train["anomaly_score"] = labels
+  anomalies = df_train[df_train.anomaly_score == -1] #Samples with label -1 we be considered anomalies
+  data = df_train.drop(anomalies.index.values, axis = 0) #And they will be dropped from the dataframe
+  df_train = data.astype(float).dropna() #Droping the Na values
+
+  return df_train
+
+#z-Score algorithm training
+def z_score_training(df, site_id, features_model, lstm, min_speed = None, max_speed = None, ):
+  df = z_score_detection(df, 3) #Calling function to detect and remove outliers in the DataFrame df
+
+  df = df[features_model] #The df will have only the selected features
+
+  cleaned_data = df
+
+  cleaned_data = cleaned_data.values[:90000] #Selecting only the first 90000 data
+
+  val_len = int(len(cleaned_data) * 0.1) #Setting validation length to 10% of the total cleaned data
+
+  #Separating the feature matrix x and the target variable y from the cleaned data
+  x = cleaned_data[:, :cleaned_data.shape[1] - 1] #x contains all columns except the last one (features)
+  y = cleaned_data[:, cleaned_data.shape[1] - 1] #y contains the last column (target)
+
+  #Training model
+  tr_len = len(cleaned_data) - val_len #Setting the length of the training model equal to the difference of the validation length from the cleaned model length
+  partitions_x = cleaned_data[:tr_len, :cleaned_data.shape[1] - 1] #The first tr_len rows are used for training
+  partitions_y = cleaned_data[:tr_len, cleaned_data.shape[1] - 1] #The rest tr_len rowsare used for validation
+
+  #Validation model
+  df_val = cleaned_data
+  
+  #The last val_len rows are split into partitions_x_val (features) and partitions_y_val
+  partitions_x_val = df_val[-val_len:, :df_val.shape[1] - 1] 
+  partitions_y_val = df_val[-val_len:, df_val.shape[1] - 1]
+
+  val_data = np.array(np.append(partitions_x_val, np.asmatrix([partitions_y_val]).T, axis = 1)) #Combines partitions_x_val and partitions_y_val back into a single array val_data for validation purposes
+
+  n_steps = 15 #Defines the number of time steps for sequence data
+
+  input_shape = partitions_x.shape[1] #Defines the input shape as the number of features in the dataset
+
+  raw_seq = np.array(np.append(x, np.asmatrix([y]).T, axis = 1)) #x and y arrays are concatenated into one array
+
+  #If lstm=True
+  if lstm:
+    x_lstm, y_lstm = split_sequence(raw_seq, n_steps) #Calls the split_sequence function to split the raw data raw_seq into sequences of length n_steps
+
+  neurons = 15 #Defines the number of the neurons to 15
+  estimator = baseline_model(neurons, n_steps, input_shape, lstm, optimizer='Adam') #Calls the baseline model to build the model 
+
+  callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=4) #Sets up early stopping to monitor val_loss and stop training if the loss doesn't improve after 4 consecutive epochs
+
+  epochs = 100 #Defines the number of epochs to 100
+
+  #If lstm=True
+  if lstm:
+    history = estimator.fit(x_lstm, y_lstm, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #Τhe LSTM data x_lstm and y_lstm are used
+  else:
+    history = estimator.fit(partitions_x, partitions_y, epochs=100, verbose=1, validation_split=0.1, callbacks=[callback],) #partitions_x and partitions_y are used
+
+  #Extracts the loss and validation loss from the training history
+  list_loss = history.history['loss']
+  list_val_loss = history.history['val_loss']
+
+  #Prints the loss and validation loss during training
+  print("Loss: ", list_loss)
+  print("Val Loss: ", list_val_loss)
+
+  mse = estimator.evaluate(x_lstm, y_lstm) if lstm else estimator.evaluate(partitions_x, partitions_y) #Evaluates the model on the training data and calculates the mean squared error (MSE)
+  #Computes the root mean square (RMS) for both the training loss and validation loss
+  loss = str(np.round(math.sqrt(np.mean(list_loss))))
+  val_loss = str(np.round(math.sqrt(np.mean(list_val_loss))))
+  #Converts the list of training and validation losses to their square root (MAE approximation)
+  mae_list_loss = [math.sqrt(x) for x in list_loss]
+  mae_list_val_loss = [math.sqrt(x) for x in list_val_loss]
+  plot_convergence(mae_list_loss, mae_list_val_loss, loss, val_loss, mse, history, site_id) #Calls plot_convergence to generate and plot the convergence of training and validation losses
+  print("\nLoss {} Val Loss {}".format(loss, val_loss)) #Prints the final training and validation loss values after model training
+  arch = estimator.to_json() #Serializes the model architecture to a JSON string
+
+  return {"loss": loss, "val_loss": val_loss, 'estimator': estimator, 'epochs' : epochs} #Returns a dictionary containing the final loss, validation loss, trained model (estimator), and the number of epochs
+
+zscore_res = z_score_training(df, site_id, features_model, lstm, min_speed = 9, max_speed = 23, ) #Calls the DBSCAN training function
 
 
