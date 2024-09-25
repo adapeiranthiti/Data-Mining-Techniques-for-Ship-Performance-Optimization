@@ -32,16 +32,12 @@ tf.random.set_seed(69) #TensorFlow generator
 from google.colab import drive
 drive.mount('/content/drive')
 
-#Raw data printing
-df = pd.read_csv('/content/drive/4_EO4EU.csv')
-print(df.head())
+df = pd.read_csv('/content/drive/4_EO4EU.csv') #Raw data printing
 
 #Filtering the data according to the standards, in order to create a dataset only with the right values of the columns
 df = df[(df['stw']>=5) & (df['stw']<=17) & (df['foc']>0) & (df['wind_s']>0) & (df['rpm']>0) & (df['power']>0)] #Keeping only the right data
-print(df.head())
 
 #Checking for missing values
-print("Missing values:\n")
 print('Number of missing values = %d' % (df.isna().sum()))
 
 #Checking for duplicates
@@ -63,7 +59,6 @@ def sp_harvensine(lat, lon, degrees = True):
 
 #Computing the harvensine of these two lats and longs to create a single lat and long column
 df['lat_lon'] = df.apply(lambda x: sp_harvensine(x['lat'], x['lon']), axis = 1) 
-print(df.head())
 
 #Dropping dt, lat and long
 df2 = df.drop(['dt'], axis = 1)
@@ -188,7 +183,7 @@ for i in range(len(correlation_matrix.columns)):
 			print(correlation_matrix.columns[i], correlation_matrix.columns[j], correlation_matrix.iloc[i, j])
 
 
-##Neural network
+##Anomaly Detection
 n_most_important = 7 #The number of the attributes we want to see the importance of
 rows_for_feature_sel = 500 #The number of the rows we want to take from the selected features
 site_id = 4
