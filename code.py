@@ -33,7 +33,7 @@ from google.colab import drive
 drive.mount('/content/drive')
 
 #Raw data printing
-df = pd.read_csv('/content/drive/MyDrive/BSC Thesis Apeiranthiti/project/danaos-nkua-jupyter/data/4_EO4EU.csv')
+df = pd.read_csv('/content/4_EO4EU.csv')
 print(df.head())
 
 #Filtering the data according to the standards, in order to create a dataset only with the right values of the columns
