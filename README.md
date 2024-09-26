@@ -1053,4 +1053,4 @@ def z_score_training(df, site_id, features_model, lstm, min_speed = None, max_sp
 zscore_res = z_score_training(df, site_id, features_model, lstm, min_speed = 9, max_speed = 23, ) #Calls the DBSCAN training function
 ```
 
-After those 
+After these experiments, I believe that the algorithm with the highest accuracy is the Z-Score using stw.
