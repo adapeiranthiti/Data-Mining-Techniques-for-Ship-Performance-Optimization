@@ -1,4 +1,4 @@
-# Path Optimization Based on Weather Conditions
+# Data Mining Techniques for Ship Performance Optimization
 
 *This project is an attempt to approach the issue of ship route optimization based on weather conditions. Data analysis techniques and deep learning algorithms were used to achieve our goal.*
 
