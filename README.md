@@ -5,7 +5,7 @@
 ## Author
 
 I'm Adamantia Apeiranthiti, a final year undergraduate student at National and Kapodistrian University of Athens. This project is a part of my thesis with objective in Path Optimization Based on Weather Conditions.
-For this project I used [Python 3.11.7](https://www.python.org/downloads/release/python-3117/) and [Anaconda 2024.02-1](https://docs.anaconda.com/anaconda/allpkglists/2024.02-1/). The dataset for this thesis, was used in collaboration with [Danaos Shipping Co. Ltd.](https://www.danaos.com/home/default.aspx). Below, you can learn more about the project. 
+For this project I used [Google Colaboratory](https://colab.research.google.com). The dataset for this thesis, was used in collaboration with [Danaos Shipping Co. Ltd.](https://www.danaos.com/home/default.aspx). Below, you can learn more about the project. 
 
 ## Contents
 
