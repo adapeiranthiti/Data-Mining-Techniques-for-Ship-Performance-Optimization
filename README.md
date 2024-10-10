@@ -4,7 +4,7 @@
 
 ## Author
 
-I'm Adamantia Apeiranthiti, a final year undergraduate student at National and Kapodistrian University of Athens. This project is a part of my thesis with objective in Path Optimization Based on Weather Conditions.
+I'm Adamantia Apeiranthiti, a final year undergraduate student at National and Kapodistrian University of Athens. This project is a part of my thesis with objective in Data Mining Techniques for Ship Performance Optimization.
 For this project I used [Google Colaboratory](https://colab.research.google.com). The dataset for this thesis, was used in collaboration with [Danaos Shipping Co. Ltd.](https://www.danaos.com/home/default.aspx). Below, you can learn more about the project. 
 
 ## Contents
